@@ -32,7 +32,7 @@
   table{width:100%;border-collapse:collapse;margin-top:8px}
   th,td{padding:10px;border-bottom:1px solid var(--border);text-align:right}
   th:first-child,td:first-child{text-align:left}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#0b1022;border:1px solid var(--border);font-size:12px;color:var(--muted)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#0b1022;border:1px solid var(--border);font-size:12px;color:#9aa4bf}
   .stat{font-variant-numeric:tabular-nums}
   .good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -91,8 +91,10 @@
         <span class="badge" id="simInfo">尚未運算</span>
       </div>
       <div class="progress"><div class="bar" id="bar"></div></div>
-      <div class="row" style="margin-top:8px">
+      <div class="row" style="margin-top:8px;gap:16px;flex-wrap:wrap">
         <span>機率 ≈ <b id="prob" class="stat">—</b></span>
+        <span class="badge">起手 0 手坑 機率：<b id="pZeroH">—</b></span>
+        <span class="badge">起手 0 動點 機率：<b id="pZeroS">—</b></span>
       </div>
     </section>
   </div>
@@ -115,7 +117,8 @@ function currentHandN(){
   return +document.querySelector('input[name=\"turn\"]:checked').value;
 }
 
-function fmt(x,d=3){return (Math.round(x*10**d)/10**d).toFixed(d);}
+function fmt(x,d=2){return (Math.round(x*10**d)/10**d).toFixed(d);}
+function fmt3(x){return (Math.round(x*1000)/1000).toFixed(3);}
 
 function computeExpect(){
   const {nS,nH,nG,nO,deckN}=readCounts();
@@ -124,35 +127,87 @@ function computeExpect(){
   if(nG>=deckN){['eT','eS','eH','eG','eO'].forEach(id=>$('#'+id).textContent='∞');return;}
   const eT=handN/(1-nG/deckN);
   const denom=Math.max(1,deckN-nG);
-  $('#eT').textContent=fmt(eT);
-  $('#eS').textContent=fmt((nS/denom)*eT);
-  $('#eH').textContent=fmt((nH/denom)*eT);
-  $('#eG').textContent=fmt((nG/deckN)*eT);
-  $('#eO').textContent=fmt((nO/denom)*eT);
+  $('#eT').textContent=fmt3(eT);
+  $('#eS').textContent=fmt3((nS/denom)*eT);
+  $('#eH').textContent=fmt3((nH/denom)*eT);
+  $('#eG').textContent=fmt3((nG/deckN)*eT);
+  $('#eO').textContent=fmt3((nO/denom)*eT);
 }
 
 function rngShuffle(a){for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function simulateOnce(handN,counts){
+  const{nS,nH,nG,nO}=counts;
+  const deck=[];
+  for(let i=0;i<nS;i++) deck.push('S');
+  for(let i=0;i<nH;i++) deck.push('H');
+  for(let i=0;i<nG;i++) deck.push('G');
+  for(let i=0;i<nO;i++) deck.push('O');
+  rngShuffle(deck);
+  let toDraw=handN,idx=0,S=0,H=0;
+  while(toDraw>0 && idx<deck.length){
+    const c=deck[idx++]; toDraw--;
+    if(c==='S') S++;
+    else if(c==='H') H++;
+    else if(c==='G') toDraw++; // 成金補抽
+  }
+  return {S,H};
+}
+
+async function simulateManyAsync(trials,handN,counts){
+  const chunk=2000;
+  let ok=0, zS=0, zH=0, done=0;
+  const bar=$('#bar');
+  const t0=performance.now();
+  while(done<trials){
+    const lim=Math.min(chunk,trials-done);
+    for(let i=0;i<lim;i++){
+      const r=simulateOnce(handN,counts);
+      if(r.S>=needS && r.H>=needH) ok++;
+      if(r.H===0) zH++;
+      if(r.S===0) zS++;
+    }
+    done+=lim;
+    bar.style.width=(done/trials*100).toFixed(1)+'%';
+    await new Promise(r=>setTimeout(r,0));
+  }
+  const t1=performance.now();
+  return {ok,trials,ms:t1-t0,zS,zH};
+}
+
 let needS=1,needH=1;
-function simulateOnce(handN,counts){const{nS,nH,nG,nO}=counts;const deck=[];
-for(let i=0;i<nS;i++)deck.push('S');for(let i=0;i<nH;i++)deck.push('H');for(let i=0;i<nG;i++)deck.push('G');for(let i=0;i<nO;i++)deck.push('O');
-rngShuffle(deck);let toDraw=handN,idx=0,S=0,H=0;while(toDraw>0&&idx<deck.length){const c=deck[idx++];toDraw--;if(c==='S')S++;else if(c==='H')H++;else if(c==='G')toDraw++;}
-return(S>=needS&&H>=needH);}
-async function simulateManyAsync(trials,handN,counts){const chunk=2000;let ok=0,done=0;const bar=$('#bar');const t0=performance.now();
-while(done<trials){const lim=Math.min(chunk,trials-done);for(let i=0;i<lim;i++){if(simulateOnce(handN,counts))ok++;}done+=lim;bar.style.width=(done/trials*100).toFixed(1)+'%';await new Promise(r=>setTimeout(r,0));}
-const t1=performance.now();return{ok,trials,ms:t1-t0};}
 function updateNeedFromInputs(){needS=Math.max(0,+$('#needS').value|0);needH=Math.max(0,+$('#needH').value|0);}
-async function runProbability(){updateNeedFromInputs();const{nS,nH,nG,nO,deckN}=readCounts();const handN=currentHandN();
-if(deckN<=0){alert('總張數不可為 0');return;}if(nG>=deckN){alert('成金張數不可等於或超過牌組張數');return;}
-const trials=100000;const btn=$('#btnProb');const info=$('#simInfo');const bar=$('#bar');
-btn.disabled=true;info.textContent='運算中… 0%';bar.style.width='0%';
-const res=await simulateManyAsync(trials,handN,{nS,nH,nG,nO});
-const p=res.ok/res.trials*100;$('#prob').textContent=p.toFixed(2)+'%';
-info.textContent=`完成：${p.toFixed(2)}% ｜ 試行 ${res.trials.toLocaleString()} 次 ｜ ${(res.ms/1000).toFixed(2)} 秒`;btn.disabled=false;}
+
+async function runProbability(){
+  updateNeedFromInputs();
+  const {nS,nH,nG,nO,deckN}=readCounts();
+  const handN=currentHandN();
+  if(deckN<=0){alert('總張數不可為 0');return;}
+  if(nG>=deckN){alert('成金張數不可等於或超過牌組張數');return;}
+  const trials=100000;
+  const btn=$('#btnProb'); const info=$('#simInfo'); const bar=$('#bar');
+  btn.disabled=true; info.textContent='運算中… 0%'; bar.style.width='0%';
+  const res=await simulateManyAsync(trials,handN,{nS,nH,nG,nO});
+  const p = res.ok/res.trials*100;
+  const pZeroH = res.zH/res.trials*100;
+  const pZeroS = res.zS/res.trials*100;
+  $('#prob').textContent = fmt(p) + '%';
+  $('#pZeroH').textContent = fmt(pZeroH) + '%';
+  $('#pZeroS').textContent = fmt(pZeroS) + '%';
+  info.textContent=`完成：條件機率 ${fmt(p)}% ｜ 0手坑 ${fmt(pZeroH)}% ｜ 0動點 ${fmt(pZeroS)}% ｜ 試行 ${res.trials.toLocaleString()} 次 ｜ ${(res.ms/1000).toFixed(2)} 秒`;
+  btn.disabled=false;
+}
+
+// 綁定：即時更新（輸入/切換就更新期望值與總張數）
 ['nS','nH','nG','nO'].forEach(id=>$('#'+id).addEventListener('input',computeExpect));
 document.querySelectorAll('input[name=\"turn\"]').forEach(r=>r.addEventListener('change',computeExpect));
+
+// Enter 快捷：在 X/Y 欄位直接觸發運算
 $('#needS').addEventListener('keydown',e=>{if(e.key==='Enter')runProbability();});
 $('#needH').addEventListener('keydown',e=>{if(e.key==='Enter')runProbability();});
 $('#btnProb').addEventListener('click',runProbability);
+
+// 初始顯示
 computeExpect();
 </script>
 </body>
